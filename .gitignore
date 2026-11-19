@@ -1,0 +1,19 @@
+# Logs and test output
+*.log
+Logs/
+logs/
+
+# Local test copies / downloaded installers
+*.msi
+*.msp
+*.exe
+*.bak
+*.tmp
+
+# Editor / OS files
+.vscode/
+.idea/
+*.swp
+Thumbs.db
+desktop.ini
+.DS_Store
