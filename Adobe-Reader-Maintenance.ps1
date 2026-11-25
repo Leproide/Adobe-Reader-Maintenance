@@ -25,9 +25,10 @@
        della reinstallazione). Il lavoro non salvato degli utenti va perso.
     1. Profili utente: svuota ConnectorIcons (bug Adobe: miniature mai eliminate) e le cache WebView2/AcroCef
        (queste ultime solo se l'utente non ha Acrobat ancora aperto).
-    2. C:\ProgramData\Adobe\ARM: elimina cartelle Reader_*/Acrobat_* di versioni inferiori a quella installata
-       (tutte solo se nessun Acrobat/Reader è presente, né registrato né su disco) e sottocartelle di ARM\S
-       più vecchie di 30 giorni.
+    2. C:\ProgramData\Adobe\ARM (download dell'updater Adobe):
+       - ForzaPuliziaARM=true: svuotamento completo (file in uso saltati);
+       - ForzaPuliziaARM=false: elimina solo cartelle Reader_*/Acrobat_* di versioni inferiori a quella installata
+         (tutte solo se nessun Acrobat/Reader è presente) e sottocartelle di ARM\S più vecchie di 30 giorni.
     3. MSI/MSP orfani di Adobe in C:\Windows\Installer: eliminati solo se non referenziati da alcun prodotto
        E identificati come Adobe Acrobat/Reader (Summary Information). Esclusi file modificati nelle ultime 24 ore.
     4. Cache MSI di Reader (patch referenziate): se oltre SogliaReinstallGB (o con ForceReinstall) -> disinstalla
@@ -51,7 +52,7 @@
     Variabili component Datto:
       SogliaReinstallGB (String, 5) | Reinstalla (Boolean, true) | ForceReinstall (Boolean, false)
       VersioneReader (String, vuoto = automatico) | PulisciProfili (Boolean, true) | PulisciARM (Boolean, true)
-      PulisciOrfani (Boolean, true) | UdfNumero (String, vuoto = nessuna scrittura UDF)
+      ForzaPuliziaARM (Boolean, false) | PulisciOrfani (Boolean, true) | UdfNumero (String, vuoto = nessuna UDF)
       FirmaMspThumb (String, impronte autorizzate separate da virgola) | TerminaAcrobat (Boolean, true)
       Facoltative (solo se cambiano i certificati degli installer base): FirmaBaseX86Thumb | FirmaBaseX64Thumb
     Exit code: 0 = OK / nulla da fare | 2 = reinstallazione necessaria ma non eseguita o anomalia da verificare | 1 = errore
@@ -72,7 +73,8 @@ $TerminaAcrobat    = $true          # $true = chiude forzatamente Acrobat/Reader
 $VersioneReader    = ''             # '' = rilevamento automatico; es. '2600322110' per forzare una versione
 $VersioneRiserva   = '2600322110'   # usata se il rilevamento automatico non trova versioni valide
 $PulisciProfili    = $true          # ConnectorIcons e cache Acrobat nei profili utente
-$PulisciARM        = $true          # C:\ProgramData\Adobe\ARM
+$PulisciARM        = $true          # C:\ProgramData\Adobe\ARM (passaggio attivo/disattivo)
+$ForzaPuliziaARM   = $false         # $true = svuota completamente ARM (vedi README); $false = solo versioni precedenti a quella installata
 $PulisciOrfani     = $true          # MSI/MSP orfani di Adobe in C:\Windows\Installer
 $UdfNumero         = ''             # '' = non scrivere UDF; es. '10' per Custom10
 $SpazioMinimoGB    = 3              # spazio libero minimo sul disco di sistema per reinstallare
@@ -612,6 +614,7 @@ try {
     $script:terminaAcrobat  = Get-BoolVar 'TerminaAcrobat'    $TerminaAcrobat
     $pulisciProfili         = Get-BoolVar 'PulisciProfili'    $PulisciProfili
     $pulisciARM             = Get-BoolVar 'PulisciARM'        $PulisciARM
+    $forzaPuliziaARM        = Get-BoolVar 'ForzaPuliziaARM'   $ForzaPuliziaARM
     $pulisciOrfani          = Get-BoolVar 'PulisciOrfani'     $PulisciOrfani
     $udfNumero              = Get-StrVar  'UdfNumero'         $UdfNumero
     $script:versioneForzata = Get-StrVar  'VersioneReader'    $VersioneReader
@@ -641,8 +644,8 @@ try {
     $udf = New-Object System.Collections.Generic.List[string]
 
     Out-Log "=== Manutenzione Adobe Acrobat Reader - $env:COMPUTERNAME - $(Get-Date -Format 'yyyy-MM-dd HH:mm') ==="
-    Out-Log ("Opzioni: Soglia={0} GB Reinstalla={1} ForceReinstall={2} TerminaAcrobat={3} Versione={4} Profili={5} ARM={6} Orfani={7} ImpronteMSP={8}" -f $soglia, $reinstalla, $forceReinstall, $script:terminaAcrobat,
-             $(if ($script:versioneForzata) { $script:versioneForzata } else { 'automatica' }), $pulisciProfili, $pulisciARM, $pulisciOrfani, $script:mspThumbs.Count)
+    Out-Log ("Opzioni: Soglia={0} GB Reinstalla={1} ForceReinstall={2} TerminaAcrobat={3} Versione={4} Profili={5} ARM={6} ForzaARM={7} Orfani={8} ImpronteMSP={9}" -f $soglia, $reinstalla, $forceReinstall, $script:terminaAcrobat,
+             $(if ($script:versioneForzata) { $script:versioneForzata } else { 'automatica' }), $pulisciProfili, $pulisciARM, $forzaPuliziaARM, $pulisciOrfani, $script:mspThumbs.Count)
     if ($forceReinstall) { Out-Log '!!! ForceReinstall ATTIVO: Reader verra'' reinstallato indipendentemente dalla soglia !!!' }
     if ($script:mspThumbs.Count -eq 0) { Out-Log 'ATTENZIONE: FirmaMspThumb vuota o non valida: la reinstallazione verra'' rifiutata.' }
 
@@ -700,10 +703,20 @@ try {
     # ---------------- 2. C:\ProgramData\Adobe\ARM ----------------
     if ($pulisciARM) {
         $arm = Join-Path $env:ProgramData 'Adobe\ARM'
-        if ($rilevamentoIncoerente) {
+        if (-not (Test-Path -LiteralPath $arm)) {
+            Out-Log '[ARM] Cartella non presente.'
+        }
+        elseif ($forzaPuliziaARM) {
+            # Svuotamento completo: solo download dell'updater, la cartella radice resta
+            $s = Clear-Folder -Path $arm -Base $env:ProgramData
+            Out-Log ("[ARM] Svuotamento completo (ForzaPuliziaARM): {0:N2} GB eliminati, {1} file - in uso saltati: {2}" -f ($s.Bytes / 1GB), $s.Cancellati, $s.InUso)
+            $script:totLiberato += $s.Bytes
+            $udf.Add(("ARM {0:N1}GB" -f ($s.Bytes / 1GB)))
+        }
+        elseif ($rilevamentoIncoerente) {
             Out-Log '[ARM] Saltato: Acrobat/Reader presente su disco ma non riconosciuto, versione di riferimento non determinabile.'
         }
-        elseif (Test-Path -LiteralPath $arm) {
+        else {
             $verRif = ($prodotti | Where-Object { $_.Versione } | Sort-Object Versione -Descending | Select-Object -First 1).Versione
             if ($prodotti.Count -gt 0 -and -not $verRif) {
                 Out-Log '[ARM] Saltato: prodotto installato ma versione non leggibile.'
@@ -728,8 +741,6 @@ try {
                 $script:totLiberato += $armBytes
                 $udf.Add(("ARM {0:N1}GB" -f ($armBytes / 1GB)))
             }
-        } else {
-            Out-Log '[ARM] Cartella non presente.'
         }
     }
 

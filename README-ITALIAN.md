@@ -13,9 +13,10 @@ Script PowerShell che recupera lo spazio disco occupato da Adobe Acrobat Reader 
 1. **Profili utente**
    - Svuota `AppData\LocalLow\Adobe\Acrobat\DC\ConnectorIcons` (bug Adobe: le miniature non vengono mai eliminate e possono arrivare a diversi GB per utente).
    - Svuota le cache WebView2/AcroCef di Acrobat, **solo per gli utenti che non hanno ancora processi Acrobat/Reader attivi**.
-2. **`C:\ProgramData\Adobe\ARM`**
-   - Elimina le cartelle `Reader_*` / `Acrobat_*` di versioni inferiori a quella installata (tutte se nessun Acrobat/Reader è presente, né registrato né su disco).
-   - Elimina le sottocartelle di `ARM\S` più vecchie di 30 giorni.
+2. **`C:\ProgramData\Adobe\ARM`** (download dell'updater Adobe)
+   - Default (`ForzaPuliziaARM=false`): elimina le cartelle `Reader_*` / `Acrobat_*` di versioni inferiori a quella installata (tutte se nessun Acrobat/Reader è presente, né registrato né su disco).
+   - Default: elimina le sottocartelle di `ARM\S` più vecchie di 30 giorni.
+   - Con `ForzaPuliziaARM=true`: svuota l'intera cartella (vedi [ForzaPuliziaARM](#forzapuliziaarm)).
 3. **MSI/MSP orfani di Adobe in `C:\Windows\Installer`**
    - Eliminati solo se non referenziati da alcun prodotto installato **e** identificati come Adobe Acrobat/Reader tramite Summary Information. Esclusi i file modificati nelle ultime 24 ore.
 4. **Cache MSI di Reader (patch referenziate)**
@@ -45,6 +46,7 @@ Tutte le opzioni sono nel blocco **CONFIGURAZIONE** in cima allo script. Le vari
 | `VersioneRiserva` | stringa | `2600322110` | Versione usata se il rilevamento automatico fallisce (solo nel blocco dello script) |
 | `PulisciProfili` | bool | `true` | Pulizia di ConnectorIcons e cache Acrobat nei profili utente |
 | `PulisciARM` | bool | `true` | Pulizia di `C:\ProgramData\Adobe\ARM` |
+| `ForzaPuliziaARM` | bool | `false` | `true` = svuota completamente `ARM` invece di eliminare solo le versioni precedenti. Vedi [ForzaPuliziaARM](#forzapuliziaarm) |
 | `PulisciOrfani` | bool | `true` | Eliminazione dei pacchetti MSI/MSP Adobe orfani in `C:\Windows\Installer` |
 | `UdfNumero` | stringa | vuoto | Vuoto = nessuna scrittura UDF. Numero di una UDF Datto RMM libera in cui scrivere l'esito (es. `10` = `Custom10`) |
 | `SpazioMinimoGB` | numero | `3` | Spazio libero minimo sul disco di sistema per reinstallare (solo nel blocco dello script) |
@@ -103,6 +105,7 @@ L'output dell'ultima esecuzione finisce nel file di log; l'exit code è visibile
 | `VersioneReader` | String | *(vuoto)* | Lasciare vuoto per il rilevamento automatico (consigliato). Per forzare una versione: es. `2600322110` |
 | `PulisciProfili` | Boolean | `True` | Svuota ConnectorIcons e cache di Acrobat nei profili utente (cache saltate se l'utente ha Acrobat aperto) |
 | `PulisciARM` | Boolean | `True` | Elimina in `C:\ProgramData\Adobe\ARM` le versioni precedenti a quella installata |
+| `ForzaPuliziaARM` | Boolean | `False` | Svuota completamente `C:\ProgramData\Adobe\ARM` (file in uso saltati). Solo per job mirati su dispositivi con ARM enorme |
 | `PulisciOrfani` | Boolean | `True` | Elimina i pacchetti MSI/MSP di Adobe orfani in `C:\Windows\Installer` |
 | `UdfNumero` | String | `31` | Vuoto, oppure il numero di una UDF libera in cui scrivere l'esito (es. `10` = `Custom10`) |
 | `FirmaMspThumb` | String | `7B0F360B775F76C94A12CA48445AA2D2A875701C` | Impronte dei certificati intermedi Adobe autorizzati per l'aggiornamento MSP, separate da virgola. Se la verifica fallisce, l'impronta nuova compare nello stdout: aggiungila qui senza togliere le precedenti |
@@ -129,6 +132,18 @@ Note:
 - Il testo della UDF è `yyyy-MM-dd` seguito da un riepilogo (spazio liberato per sezione, stato di Reader, esito della reinstallazione), troncato a 255 caratteri.
 - Non impostare mai `ForceReinstall` come default su job distribuiti su più dispositivi.
 - Con `TerminaAcrobat=True` schedula il job fuori orario: gli utenti perdono il lavoro non salvato in Acrobat/Reader.
+
+## ForzaPuliziaARM
+
+Tienila a **`false`** (default). Con `false` lo script elimina solo le cartelle `Reader_*` / `Acrobat_*` di versioni precedenti a quella installata e le sottocartelle di `ARM\S` più vecchie di 30 giorni, quindi quello che l'updater sta usando in quel momento resta al suo posto.
+
+Con `true` (e `PulisciARM=true`) lo script cancella **tutto** il contenuto di `C:\ProgramData\Adobe\ARM`, indipendentemente dalla versione installata:
+- vengono eliminati anche la cartella della versione attuale e gli aggiornamenti già scaricati ma non ancora installati: l'updater Adobe dovrà riscaricarli al controllo successivo (su molti dispositivi insieme significa tanto traffico verso Adobe nello stesso momento);
+- se mentre lo script gira l'updater sta scaricando o installando un aggiornamento, i file in uso vengono saltati ma il resto viene cancellato, quindi quell'aggiornamento può fallire ed essere ritentato più tardi;
+- la cartella `ARM` resta; junction e symlink non vengono seguiti;
+- viene eseguita anche quando Acrobat/Reader è su disco ma non registrato in Windows Installer (in modalità normale ARM in quel caso viene saltata).
+
+Usala come job mirato, fuori orario, sui dispositivi dove `ARM` è cresciuta a dismisura e la modalità normale non libera abbastanza spazio.
 
 ## Se Adobe cambia certificato
 
